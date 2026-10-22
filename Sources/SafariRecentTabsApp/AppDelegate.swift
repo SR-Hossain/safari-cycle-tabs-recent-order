@@ -7,19 +7,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: SwitcherCoordinator?
     private var hotkeyController: HotkeyController?
     private var pollTimer: Timer?
+    private var activeApplicationObserver: NSObjectProtocol?
     private var includesTabsFromAllWindows = UserDefaults.standard.bool(forKey: includesAllWindowsPreferenceKey)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
         let safariClient = AppleScriptSafariAutomationClient()
-        let faviconProvider = FaviconProvider()
-        let panelController = SwitcherPanelController(faviconProvider: faviconProvider)
+        let panelController = SwitcherPanelController()
         let activeApplicationProvider = WorkspaceActiveApplicationProvider()
         var hotkeyController: HotkeyController?
         let coordinator = SwitcherCoordinator(
             safariClient: safariClient,
-            faviconProvider: faviconProvider,
             panelController: panelController,
             activeApplicationProvider: activeApplicationProvider,
             includesTabsFromAllWindows: includesTabsFromAllWindows,
@@ -62,11 +61,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         configureStatusItem()
         newHotkeyController.start()
-        startPollingSafari()
+        installSafariActivationObserver()
+        updatePollingForFrontmostApp()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        pollTimer?.invalidate()
+        stopPollingSafari()
+        if let activeApplicationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(activeApplicationObserver)
+        }
         hotkeyController?.stop()
     }
 
@@ -153,14 +156,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
+    // Poll only while Safari is frontmost; the timer is torn down as soon as another app activates.
+    private func installSafariActivationObserver() {
+        activeApplicationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updatePollingForFrontmostApp()
+        }
+    }
+
+    private func updatePollingForFrontmostApp() {
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.Safari" {
+            startPollingSafari()
+        } else {
+            stopPollingSafari()
+        }
+    }
+
     private func startPollingSafari() {
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak coordinator] _ in
-            guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.Safari" else {
-                return
-            }
-            Task { @MainActor in
-                await coordinator?.refreshActiveTab()
-            }
+        guard pollTimer == nil else {
+            return
+        }
+        refreshActiveTab()
+        Task { @MainActor [weak coordinator] in
+            await coordinator?.prefetchTabs()
+        }
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+            self?.refreshActiveTab()
+        }
+        timer.tolerance = 0.3
+        pollTimer = timer
+    }
+
+    private func stopPollingSafari() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
+    private func refreshActiveTab() {
+        Task { @MainActor [weak coordinator] in
+            await coordinator?.refreshActiveTab()
         }
     }
 

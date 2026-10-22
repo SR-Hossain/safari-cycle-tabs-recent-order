@@ -21,6 +21,7 @@ public final class HotkeyController {
     private var localKeyMonitor: Any?
     private var activeApplicationObserver: NSObjectProtocol?
     private var modifierReleaseTimer: Timer?
+    private var keyRepeatTimer: Timer?
 
     public init(
         onHotkey: @escaping () -> Void,
@@ -64,6 +65,7 @@ public final class HotkeyController {
         eventHandlerRef = nil
         modifierReleaseTimer?.invalidate()
         modifierReleaseTimer = nil
+        stopKeyRepeat()
         if let activeApplicationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(activeApplicationObserver)
         }
@@ -81,7 +83,11 @@ public final class HotkeyController {
             return
         }
 
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        // Released events let a held Tab auto-repeat until the key comes up.
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
         let selfPointer = Unmanaged.passUnretained(self).toOpaque()
 
         InstallEventHandler(
@@ -91,6 +97,13 @@ public final class HotkeyController {
                     return noErr
                 }
                 let controller = Unmanaged<HotkeyController>.fromOpaque(userData).takeUnretainedValue()
+                if GetEventKind(event) == UInt32(kEventHotKeyReleased) {
+                    // Pressing or releasing Shift while Tab is held can also report a release; keep repeating then.
+                    if !isTabKeyDown() {
+                        controller.stopKeyRepeat()
+                    }
+                    return noErr
+                }
                 var hotKeyID = EventHotKeyID()
                 let status = GetEventParameter(
                     event,
@@ -115,8 +128,8 @@ public final class HotkeyController {
                 }
                 return noErr
             },
-            1,
-            &eventType,
+            eventTypes.count,
+            &eventTypes,
             selfPointer,
             &eventHandlerRef
         )
@@ -254,12 +267,41 @@ public final class HotkeyController {
 
     private func trigger(_ action: KeyboardShortcutAction) {
         beginModifierReleasePolling()
+        fire(action)
+        startKeyRepeat()
+    }
+
+    private func fire(_ action: KeyboardShortcutAction) {
         switch action {
         case .forward:
             onHotkey()
         case .reverse:
             onReverseHotkey()
         }
+    }
+
+    // Carbon hotkeys fire once per press, so mimic the system key repeat while Tab is held.
+    // Direction follows the live Shift state, so pressing Shift mid-repeat reverses like Command-Tab.
+    private func startKeyRepeat() {
+        stopKeyRepeat()
+        let timer = Timer(timeInterval: NSEvent.keyRepeatInterval, repeats: true) { [weak self] _ in
+            guard let self else {
+                return
+            }
+            guard isTabKeyDown() else {
+                self.stopKeyRepeat()
+                return
+            }
+            self.fire(GetCurrentKeyModifiers() & UInt32(shiftKey) != 0 ? .reverse : .forward)
+        }
+        timer.fireDate = Date().addingTimeInterval(NSEvent.keyRepeatDelay)
+        RunLoop.main.add(timer, forMode: .common)
+        keyRepeatTimer = timer
+    }
+
+    private func stopKeyRepeat() {
+        keyRepeatTimer?.invalidate()
+        keyRepeatTimer = nil
     }
 
     private func beginModifierReleasePolling() {
@@ -275,6 +317,7 @@ public final class HotkeyController {
             if modifiers & UInt32(controlKey) == 0 {
                 timer.invalidate()
                 self.modifierReleaseTimer = nil
+                self.stopKeyRepeat()
                 self.onControlReleased()
             }
         }
@@ -287,6 +330,10 @@ private enum HotkeyID: UInt32 {
     case safariForward = 3
     case safariReverse = 4
     case closeHighlightedTab = 5
+}
+
+private func isTabKeyDown() -> Bool {
+    CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_Tab))
 }
 
 private func fourCharCode(_ string: String) -> OSType {

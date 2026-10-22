@@ -9,16 +9,13 @@ public protocol SwitcherPanelControlling {
 
 @MainActor
 public final class SwitcherPanelController: SwitcherPanelControlling {
-    private let faviconProvider: FaviconProvider
     private var panel: NSPanel?
 
-    public init(faviconProvider: FaviconProvider) {
-        self.faviconProvider = faviconProvider
-    }
+    public init() {}
 
     public func show(state: SwitcherState) {
         let panel = panel ?? makePanel()
-        let view = SwitcherOverlayView(state: state, faviconProvider: faviconProvider)
+        let view = SwitcherOverlayView(state: state)
         panel.contentView = NSHostingView(rootView: view)
         place(panel: panel, tabCount: state.tabs.count)
         panel.orderFrontRegardless()

@@ -24,7 +24,6 @@ public struct TabDisplayModel: Identifiable, Equatable {
     public let tab: SafariTab
     public let title: String
     public let domain: String
-    public let fallbackInitial: String
 
     public var id: String { tab.id }
 
@@ -37,7 +36,6 @@ public struct TabDisplayModel: Identifiable, Equatable {
 
         self.title = trimmedTitle.isEmpty ? host : trimmedTitle
         self.domain = registrableDomain
-        self.fallbackInitial = String((registrableDomain.first ?? "S")).uppercased()
     }
 
     static func registrableDomain(from host: String) -> String {

@@ -3,6 +3,7 @@ import Foundation
 
 public protocol SafariControlling {
     func frontmostWindowTabs() throws -> [SafariTab]
+    func frontmostActiveTab() throws -> SafariTab?
     func allWindowTabs() throws -> [SafariTab]
     func activate(tab: SafariTab) throws
     func close(tab: SafariTab) throws
@@ -26,104 +27,115 @@ public enum SafariAutomationError: Error, LocalizedError {
 }
 
 public final class AppleScriptSafariAutomationClient: SafariControlling {
-    private let separator = "\u{1F}"
+    // Each `of every tab` read is one Apple event per window, instead of two per tab.
+    private static let frontmostWindowTabsSource = """
+    tell application "Safari"
+        if (count of windows) is 0 then return {}
+        set frontWindow to front window
+        return {{id of frontWindow, name of every tab of frontWindow, URL of every tab of frontWindow}, index of current tab of frontWindow}
+    end tell
+    """
+
+    private static let allWindowTabsSource = """
+    tell application "Safari"
+        if (count of windows) is 0 then return {}
+        set windowData to {}
+        repeat with safariWindow in windows
+            try
+                set end of windowData to {id of safariWindow, name of every tab of safariWindow, URL of every tab of safariWindow}
+            end try
+        end repeat
+        return {windowData, index of current tab of front window, id of front window}
+    end tell
+    """
+
+    private static let frontmostActiveTabSource = """
+    tell application "Safari"
+        if (count of windows) is 0 then return {}
+        set frontWindow to front window
+        set safariTab to current tab of frontWindow
+        return {id of frontWindow, index of safariTab, name of safariTab, URL of safariTab}
+    end tell
+    """
+
+    // Compiled once on first use; compiling on every keypress was part of the open delay.
+    private lazy var frontmostWindowTabsScript = Self.compile(Self.frontmostWindowTabsSource)
+    private lazy var allWindowTabsScript = Self.compile(Self.allWindowTabsSource)
+    private lazy var frontmostActiveTabScript = Self.compile(Self.frontmostActiveTabSource)
 
     public init() {}
 
     public func frontmostWindowTabs() throws -> [SafariTab] {
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty == false else {
-            throw SafariAutomationError.safariNotRunning
+        try ensureSafariRunning()
+        let result = try run(frontmostWindowTabsScript)
+        guard result.numberOfItems == 2,
+              let window = result.atIndex(1),
+              let activeIndex = result.atIndex(2)?.int32Value
+        else {
+            return []
         }
+        return parseWindow(window, activeIndex: Int(activeIndex), isFrontWindow: true)
+    }
 
-        let script = """
-        tell application "Safari"
-            if (count of windows) is 0 then return ""
-            set frontWindow to front window
-            set windowID to id of frontWindow
-            set activeIndex to index of current tab of frontWindow
-            set output to ""
-            set sep to ASCII character 31
-            repeat with tabIndex from 1 to count of tabs of frontWindow
-                set safariTab to tab tabIndex of frontWindow
-                set isActive to "0"
-                if tabIndex is activeIndex then set isActive to "1"
-                set output to output & windowID & sep & tabIndex & sep & isActive & sep & name of safariTab & sep & URL of safariTab & linefeed
-            end repeat
-            return output
-        end tell
-        """
-
-        return parseTabs(from: try run(script: script))
+    public func frontmostActiveTab() throws -> SafariTab? {
+        try ensureSafariRunning()
+        let result = try run(frontmostActiveTabScript)
+        guard result.numberOfItems == 4,
+              let windowID = result.atIndex(1)?.int32Value,
+              let index = result.atIndex(2)?.int32Value
+        else {
+            return nil
+        }
+        return SafariTab(
+            windowID: Int(windowID),
+            index: Int(index),
+            title: result.atIndex(3)?.stringValue ?? "",
+            url: Self.url(from: result.atIndex(4)),
+            isActive: true
+        )
     }
 
     public func allWindowTabs() throws -> [SafariTab] {
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty == false else {
-            throw SafariAutomationError.safariNotRunning
-        }
-
-        let script = """
-        tell application "Safari"
-            if (count of windows) is 0 then return ""
-            set frontWindow to front window
-            set frontWindowID to id of frontWindow
-            set activeIndex to index of current tab of frontWindow
-            set output to ""
-            set sep to ASCII character 31
-            repeat with safariWindow in windows
-                set windowID to id of safariWindow
-                repeat with tabIndex from 1 to count of tabs of safariWindow
-                    set safariTab to tab tabIndex of safariWindow
-                    set isActive to "0"
-                    if windowID is frontWindowID and tabIndex is activeIndex then set isActive to "1"
-                    set output to output & windowID & sep & tabIndex & sep & isActive & sep & name of safariTab & sep & URL of safariTab & linefeed
-                end repeat
-            end repeat
-            return output
-        end tell
-        """
-
-        return parseTabs(from: try run(script: script))
-    }
-
-    private func parseTabs(from result: String) -> [SafariTab] {
-        guard !result.isEmpty else {
+        try ensureSafariRunning()
+        let result = try run(allWindowTabsScript)
+        guard result.numberOfItems == 3,
+              let windows = result.atIndex(1),
+              let activeIndex = result.atIndex(2)?.int32Value,
+              let frontWindowID = result.atIndex(3)?.int32Value
+        else {
             return []
         }
 
-        return result
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .compactMap { line in
-                let parts = line.split(separator: Character(separator), omittingEmptySubsequences: false).map(String.init)
-                guard parts.count >= 5,
-                      let windowID = Int(parts[0]),
-                      let index = Int(parts[1]),
-                      let url = URL(string: parts[4])
-                else {
-                    return nil
-                }
-                return SafariTab(
-                    windowID: windowID,
-                    index: index,
-                    title: parts[3],
-                    url: url,
-                    isActive: parts[2] == "1"
-                )
+        var tabs: [SafariTab] = []
+        for windowIndex in stride(from: 1, through: windows.numberOfItems, by: 1) {
+            guard let window = windows.atIndex(windowIndex) else {
+                continue
             }
+            let isFrontWindow = window.atIndex(1)?.int32Value == frontWindowID
+            tabs += parseWindow(window, activeIndex: Int(activeIndex), isFrontWindow: isFrontWindow)
+        }
+        return tabs
     }
 
     public func activate(tab: SafariTab) throws {
-        let escapedURL = tab.url.absoluteString.replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedURL = Self.escape(tab.url.absoluteString)
+        // The tab list may come from a cache, so confirm the URL before trusting the index.
+        let staleCheck = tab.url == Self.blankURL
+            ? ""
+            : "if URL of targetTab is not \"\(escapedURL)\" then error \"Stale tab index\""
         let script = """
         tell application "Safari"
             set targetWindow to first window whose id is \(tab.windowID)
-            set current tab of targetWindow to tab \(tab.index) of targetWindow
+            set targetTab to tab \(tab.index) of targetWindow
+            \(staleCheck)
+            set current tab of targetWindow to targetTab
             set index of targetWindow to 1
             activate
         end tell
         """
 
         do {
-            try run(script: script)
+            try run(source: script)
         } catch {
             let fallbackScript = """
             tell application "Safari"
@@ -139,12 +151,12 @@ public final class AppleScriptSafariAutomationClient: SafariControlling {
                 end repeat
             end tell
             """
-            try run(script: fallbackScript)
+            try run(source: fallbackScript)
         }
     }
 
     public func close(tab: SafariTab) throws {
-        let escapedURL = tab.url.absoluteString.replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedURL = Self.escape(tab.url.absoluteString)
         let script = """
         tell application "Safari"
             set targetWindow to first window whose id is \(tab.windowID)
@@ -153,7 +165,7 @@ public final class AppleScriptSafariAutomationClient: SafariControlling {
         """
 
         do {
-            try run(script: script)
+            try run(source: script)
         } catch {
             let fallbackScript = """
             tell application "Safari"
@@ -167,23 +179,80 @@ public final class AppleScriptSafariAutomationClient: SafariControlling {
                 end repeat
             end tell
             """
-            try run(script: fallbackScript)
+            try run(source: fallbackScript)
         }
     }
 
+    /// Parses `{windowID, {names}, {urls}}` into tabs.
+    private func parseWindow(_ window: NSAppleEventDescriptor, activeIndex: Int, isFrontWindow: Bool) -> [SafariTab] {
+        guard window.numberOfItems == 3,
+              let windowID = window.atIndex(1)?.int32Value,
+              let names = window.atIndex(2),
+              let urls = window.atIndex(3)
+        else {
+            return []
+        }
+
+        let count = min(names.numberOfItems, urls.numberOfItems)
+        guard count > 0 else {
+            return []
+        }
+
+        return (1...count).map { index in
+            SafariTab(
+                windowID: Int(windowID),
+                index: index,
+                title: names.atIndex(index)?.stringValue ?? "",
+                url: Self.url(from: urls.atIndex(index)),
+                isActive: isFrontWindow && index == activeIndex
+            )
+        }
+    }
+
+    private func ensureSafariRunning() throws {
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty == false else {
+            throw SafariAutomationError.safariNotRunning
+        }
+    }
+
+    private static let blankURL = URL(string: "about:blank")!
+
+    private static func compile(_ source: String) -> NSAppleScript? {
+        let script = NSAppleScript(source: source)
+        var errorInfo: NSDictionary?
+        script?.compileAndReturnError(&errorInfo)
+        return script
+    }
+
+    /// Blank tabs report `missing value` for their URL.
+    private static func url(from descriptor: NSAppleEventDescriptor?) -> URL {
+        descriptor?.stringValue.flatMap(URL.init(string:)) ?? blankURL
+    }
+
+    private static func escape(_ string: String) -> String {
+        string
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
     @discardableResult
-    private func run(script: String) throws -> String {
-        guard let appleScript = NSAppleScript(source: script) else {
+    private func run(source: String) throws -> NSAppleEventDescriptor {
+        try run(NSAppleScript(source: source))
+    }
+
+    @discardableResult
+    private func run(_ script: NSAppleScript?) throws -> NSAppleEventDescriptor {
+        guard let script else {
             throw SafariAutomationError.invalidResult
         }
 
         var errorInfo: NSDictionary?
-        let descriptor = appleScript.executeAndReturnError(&errorInfo)
+        let descriptor = script.executeAndReturnError(&errorInfo)
         if let errorInfo {
             let message = errorInfo[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error."
             throw SafariAutomationError.appleScriptError(message)
         }
 
-        return descriptor.stringValue ?? ""
+        return descriptor
     }
 }

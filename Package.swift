@@ -8,17 +8,12 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "SafariRecentTabs", targets: ["SafariRecentTabsApp"]),
-        .library(name: "SafariRecentTabsCore", targets: ["SafariRecentTabsCore"])
+        .executable(name: "SafariRecentTabs", targets: ["SafariRecentTabsApp"])
     ],
     targets: [
         .target(name: "SafariRecentTabsCore"),
         .executableTarget(
             name: "SafariRecentTabsApp",
-            dependencies: ["SafariRecentTabsCore"]
-        ),
-        .testTarget(
-            name: "SafariRecentTabsTests",
             dependencies: ["SafariRecentTabsCore"]
         )
     ]

@@ -2,8 +2,6 @@
 
 **Command-Tab for Safari tabs.**
 
-![Safari Recent Tabs demo](assets/demo.gif)
-
 Safari Recent Tabs is a native macOS utility that lets you switch between Safari tabs in most-recently-used order, using a Command-Tab-style overlay.
 
 It is built for the places Safari extensions cannot reliably reach: the address bar, Start Page, blank tabs, and browser chrome.
@@ -38,7 +36,7 @@ macOS may ask for Automation permission so the app can read and switch Safari ta
 
 Control-Tab is registered only while Safari is frontmost, then unregistered when you switch away from Safari. That keeps the shortcut scoped to Safari without overriding Control-Tab in the rest of macOS.
 
-The switcher uses favicons, titles, and domains by default. That keeps the app fast and avoids asking for broad screen-capture permissions.
+The switcher shows a list of tab titles and domains. It makes no network requests, so tab URLs never leave your Mac.
 
 ## Current Status
 
@@ -52,7 +50,7 @@ Working:
 - Frontmost Safari window tab switching.
 - MRU tab ordering.
 - Native floating overlay.
-- Favicon/fallback tile display.
+- Compact list display (no network requests).
 
 Still rough:
 
@@ -66,7 +64,7 @@ Still rough:
 
 - A Mac running macOS 13 (Ventura) or newer.
 - Safari, with at least two tabs open in the window you want to switch.
-- Xcode 15 or newer, or the Xcode Command Line Tools (Swift 5.9+).
+- Xcode Command Line Tools (Swift 5.9+).
 - Git, to clone the repository.
 
 There are no third-party package dependencies, accounts, cloud services, or
@@ -92,12 +90,6 @@ You can also verify launch:
 
 ```bash
 ./script/build_and_run.sh --verify
-```
-
-Run tests:
-
-```bash
-swift test
 ```
 
 ## Permissions
@@ -152,15 +144,13 @@ Project shape:
 
 ```text
 Sources/SafariRecentTabsApp      macOS app entrypoint and menu-bar lifecycle
-Sources/SafariRecentTabsCore     tab models, services, overlay, and testable logic
-Tests/SafariRecentTabsTests      XCTest coverage for core behavior
+Sources/SafariRecentTabsCore     tab models, services, and overlay
 script/build_and_run.sh          local build, bundle, launch, and verify script
 ```
 
 Useful commands:
 
 ```bash
-swift test
 swift build
 ./script/build_and_run.sh
 ./script/build_and_run.sh --verify
