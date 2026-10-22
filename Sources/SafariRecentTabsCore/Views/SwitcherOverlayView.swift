@@ -38,7 +38,7 @@ public struct SwitcherOverlayView: View {
     }
 }
 
-private struct SwitcherTabRow: View {
+struct SwitcherTabRow: View {
     let display: TabDisplayModel
     let isHighlighted: Bool
 

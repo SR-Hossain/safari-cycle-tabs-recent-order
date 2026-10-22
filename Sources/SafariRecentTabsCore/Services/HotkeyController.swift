@@ -11,11 +11,12 @@ public final class HotkeyController {
     private let onControlReleased: () -> Void
     private let onEscape: () -> Void
     private let onCloseHighlightedTab: () -> Void
+    private let onSearchHotkey: () -> Void
     private let activeApplicationProvider: ActiveApplicationProviding
 
-    private var fallbackHotKeyRefs: [EventHotKeyRef] = []
     private var safariHotKeyRefs: [EventHotKeyRef] = []
     private var closeHighlightedTabHotKeyRefs: [EventHotKeyRef] = []
+    private var escapeHotKeyRefs: [EventHotKeyRef] = []
     private var eventHandlerRef: EventHandlerRef?
     private var keyMonitor: Any?
     private var localKeyMonitor: Any?
@@ -29,6 +30,7 @@ public final class HotkeyController {
         onControlReleased: @escaping () -> Void,
         onEscape: @escaping () -> Void,
         onCloseHighlightedTab: @escaping () -> Void,
+        onSearchHotkey: @escaping () -> Void,
         activeApplicationProvider: ActiveApplicationProviding = WorkspaceActiveApplicationProvider()
     ) {
         self.onHotkey = onHotkey
@@ -36,12 +38,12 @@ public final class HotkeyController {
         self.onControlReleased = onControlReleased
         self.onEscape = onEscape
         self.onCloseHighlightedTab = onCloseHighlightedTab
+        self.onSearchHotkey = onSearchHotkey
         self.activeApplicationProvider = activeApplicationProvider
     }
 
     public func start() {
         installCarbonEventHandler()
-        registerFallbackHotkeys()
         refreshSafariScopedHotkeys()
         installActiveApplicationObserver()
         installEventMonitors()
@@ -56,9 +58,9 @@ public final class HotkeyController {
     }
 
     public func stop() {
-        unregisterFallbackHotkeys()
         unregisterSafariHotkeys()
         unregisterCloseHighlightedTabHotkey()
+        unregisterHotkeys(&escapeHotKeyRefs)
         if let eventHandlerRef {
             RemoveEventHandler(eventHandlerRef)
         }
@@ -119,10 +121,14 @@ public final class HotkeyController {
                     return noErr
                 }
                 switch hotKeyID.id {
-                case HotkeyID.fallbackReverse.rawValue, HotkeyID.safariReverse.rawValue:
+                case HotkeyID.safariReverse.rawValue:
                     controller.trigger(.reverse)
                 case HotkeyID.closeHighlightedTab.rawValue:
                     controller.onCloseHighlightedTab()
+                case HotkeyID.safariSearch.rawValue, HotkeyID.safariSearchAlternate.rawValue:
+                    controller.onSearchHotkey()
+                case HotkeyID.escape.rawValue:
+                    controller.onEscape()
                 default:
                     controller.trigger(.forward)
                 }
@@ -132,26 +138,6 @@ public final class HotkeyController {
             &eventTypes,
             selfPointer,
             &eventHandlerRef
-        )
-    }
-
-    private func registerFallbackHotkeys() {
-        guard fallbackHotKeyRefs.isEmpty else {
-            return
-        }
-        registerHotkey(
-            id: HotkeyID.fallbackForward.rawValue,
-            keyCode: UInt32(kVK_ANSI_Grave),
-            modifiers: UInt32(controlKey),
-            label: "Control-`",
-            refs: &fallbackHotKeyRefs
-        )
-        registerHotkey(
-            id: HotkeyID.fallbackReverse.rawValue,
-            keyCode: UInt32(kVK_ANSI_Grave),
-            modifiers: UInt32(controlKey | shiftKey),
-            label: "Control-Shift-`",
-            refs: &fallbackHotKeyRefs
         )
     }
 
@@ -173,10 +159,20 @@ public final class HotkeyController {
             label: "Safari Control-Shift-Tab",
             refs: &safariHotKeyRefs
         )
-    }
-
-    private func unregisterFallbackHotkeys() {
-        unregisterHotkeys(&fallbackHotKeyRefs)
+        registerHotkey(
+            id: HotkeyID.safariSearch.rawValue,
+            keyCode: UInt32(kVK_Space),
+            modifiers: UInt32(controlKey | shiftKey),
+            label: "Safari Control-Shift-Space",
+            refs: &safariHotKeyRefs
+        )
+        registerHotkey(
+            id: HotkeyID.safariSearchAlternate.rawValue,
+            keyCode: UInt32(kVK_ANSI_Grave),
+            modifiers: UInt32(controlKey),
+            label: "Safari Control-`",
+            refs: &safariHotKeyRefs
+        )
     }
 
     private func unregisterSafariHotkeys() {
@@ -197,6 +193,24 @@ public final class HotkeyController {
             )
         } else {
             unregisterCloseHighlightedTabHotkey()
+        }
+    }
+
+    /// Escape as a hotkey works even when the search panel never became key and keystrokes go to Safari.
+    public func setEscapeHotkeyEnabled(_ isEnabled: Bool) {
+        if isEnabled {
+            guard escapeHotKeyRefs.isEmpty else {
+                return
+            }
+            registerHotkey(
+                id: HotkeyID.escape.rawValue,
+                keyCode: UInt32(kVK_Escape),
+                modifiers: 0,
+                label: "Escape",
+                refs: &escapeHotKeyRefs
+            )
+        } else {
+            unregisterHotkeys(&escapeHotKeyRefs)
         }
     }
 
@@ -325,11 +339,12 @@ public final class HotkeyController {
 }
 
 private enum HotkeyID: UInt32 {
-    case fallbackForward = 1
-    case fallbackReverse = 2
     case safariForward = 3
     case safariReverse = 4
     case closeHighlightedTab = 5
+    case safariSearch = 6
+    case safariSearchAlternate = 7
+    case escape = 8
 }
 
 private func isTabKeyDown() -> Bool {

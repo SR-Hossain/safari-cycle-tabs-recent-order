@@ -8,6 +8,7 @@ private let switcherLogger = Logger(subsystem: "com.dhruvshetty.SafariRecentTabs
 public final class SwitcherCoordinator {
     private let safariClient: SafariControlling
     private let panelController: SwitcherPanelControlling
+    private let searchPanelController: TabSearchPanelControlling
     private let activeApplicationProvider: ActiveApplicationProviding
     private let onSwitcherVisibilityChanged: (Bool) -> Void
     private var includesTabsFromAllWindows: Bool
@@ -21,15 +22,36 @@ public final class SwitcherCoordinator {
     public init(
         safariClient: SafariControlling,
         panelController: SwitcherPanelControlling,
+        searchPanelController: TabSearchPanelControlling,
         activeApplicationProvider: ActiveApplicationProviding = WorkspaceActiveApplicationProvider(),
         includesTabsFromAllWindows: Bool = false,
         onSwitcherVisibilityChanged: @escaping (Bool) -> Void = { _ in }
     ) {
         self.safariClient = safariClient
         self.panelController = panelController
+        self.searchPanelController = searchPanelController
         self.activeApplicationProvider = activeApplicationProvider
         self.includesTabsFromAllWindows = includesTabsFromAllWindows
         self.onSwitcherVisibilityChanged = onSwitcherVisibilityChanged
+    }
+
+    /// Opens the searchable tab list across all Safari windows, most recently used first.
+    public func handleSearchHotkey() async {
+        guard activeApplicationProvider.isSafariFrontmost else {
+            return
+        }
+        cancel()
+
+        guard let tabs = try? timedFetch(reason: "search", safariClient.allWindowTabs),
+              let current = tabs.first(where: \.isActive) ?? lastActiveTab
+        else {
+            return
+        }
+        recentTabs.noteActive(current)
+        let ordered = recentTabs.orderedTabs(current: current, availableTabs: tabs)
+        searchPanelController.show(tabs: ordered) { [weak self] tab in
+            self?.activate(tab)
+        }
     }
 
     public func refreshActiveTab() async {
@@ -236,6 +258,7 @@ public final class SwitcherCoordinator {
     }
 
     public func cancel() {
+        searchPanelController.hide()
         guard state != nil else {
             return
         }
@@ -262,8 +285,12 @@ public final class SwitcherCoordinator {
     }
 
     private func timedTabsForSwitcher(reason: StaticString) throws -> [SafariTab] {
+        try timedFetch(reason: reason, tabsForSwitcher)
+    }
+
+    private func timedFetch(reason: StaticString, _ fetch: () throws -> [SafariTab]) throws -> [SafariTab] {
         let start = ContinuousClock.now
-        let tabs = try tabsForSwitcher()
+        let tabs = try fetch()
         let elapsed = ContinuousClock.now - start
         let milliseconds = Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1000
         switcherLogger.notice("Fetched \(tabs.count, privacy: .public) tabs for \(reason, privacy: .public) in \(milliseconds, format: .fixed(precision: 1), privacy: .public) ms")

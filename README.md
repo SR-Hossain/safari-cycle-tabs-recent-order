@@ -126,6 +126,10 @@ an account, or a Safari extension for its core functionality.
 7. Press W while holding Control to close the highlighted tab.
 8. Release Control to switch.
 
+To search instead, press Control-` or Control-Shift-Space while Safari is frontmost. Tabs from
+all Safari windows are listed in recent order; type to filter by title or URL,
+use Up/Down to move, Return to switch, and Escape to close.
+
 The app intentionally ignores the shortcut when Safari is not the frontmost app.
 
 ## Roadmap

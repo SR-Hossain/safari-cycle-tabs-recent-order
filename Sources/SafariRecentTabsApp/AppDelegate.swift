@@ -15,11 +15,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let safariClient = AppleScriptSafariAutomationClient()
         let panelController = SwitcherPanelController()
+        let searchPanelController = TabSearchPanelController()
         let activeApplicationProvider = WorkspaceActiveApplicationProvider()
         var hotkeyController: HotkeyController?
         let coordinator = SwitcherCoordinator(
             safariClient: safariClient,
             panelController: panelController,
+            searchPanelController: searchPanelController,
             activeApplicationProvider: activeApplicationProvider,
             includesTabsFromAllWindows: includesTabsFromAllWindows,
             onSwitcherVisibilityChanged: { isVisible in
@@ -52,12 +54,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     await coordinator?.handleCloseHighlightedTab()
                 }
             },
+            onSearchHotkey: { [weak coordinator] in
+                Task { @MainActor in
+                    await coordinator?.handleSearchHotkey()
+                }
+            },
             activeApplicationProvider: activeApplicationProvider
         )
 
         self.coordinator = coordinator
         self.hotkeyController = newHotkeyController
         hotkeyController = newHotkeyController
+        searchPanelController.onVisibilityChanged = { [weak newHotkeyController] isVisible in
+            newHotkeyController?.setEscapeHotkeyEnabled(isVisible)
+        }
 
         configureStatusItem()
         newHotkeyController.start()
@@ -103,7 +113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(shortcutMenuItem(title: "Next tab", keyEquivalent: "\t", modifiers: .control))
         menu.addItem(shortcutMenuItem(title: "Previous tab", keyEquivalent: "\t", modifiers: [.control, .shift]))
         menu.addItem(shortcutMenuItem(title: "Close highlighted tab", keyEquivalent: "w", modifiers: .control))
-        menu.addItem(shortcutMenuItem(title: "Fallback switcher", keyEquivalent: "`", modifiers: .control))
+        menu.addItem(shortcutMenuItem(title: "Search tabs", keyEquivalent: " ", modifiers: [.control, .shift]))
+        menu.addItem(shortcutMenuItem(title: "Search tabs", keyEquivalent: "`", modifiers: .control))
         menu.addItem(.separator())
 
         menu.addItem(menuSectionHeader("PERMISSIONS"))
@@ -172,6 +183,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startPollingSafari()
         } else {
             stopPollingSafari()
+            // Leaving Safari closes any open switcher or search panel, which also releases the Escape hotkey.
+            Task { @MainActor [weak coordinator] in
+                coordinator?.cancel()
+            }
         }
     }
 
