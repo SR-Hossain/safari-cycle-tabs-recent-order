@@ -36,7 +36,7 @@ macOS may ask for Automation permission so the app can read and switch Safari ta
 
 Control-Tab is registered only while Safari is frontmost, then unregistered when you switch away from Safari. That keeps the shortcut scoped to Safari without overriding Control-Tab in the rest of macOS.
 
-The switcher shows a list of tab titles and domains. It makes no network requests, so tab URLs never leave your Mac.
+The switcher shows a list of tab titles and URLs. It makes no network requests, so tab URLs never leave your Mac.
 
 ## Current Status
 

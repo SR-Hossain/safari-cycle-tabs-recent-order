@@ -58,9 +58,13 @@ public final class SwitcherCoordinator {
         guard activeApplicationProvider.isSafariFrontmost else {
             return
         }
-        guard let current = try? safariClient.frontmostActiveTab() else {
+        guard let polled = try? safariClient.frontmostActiveTab() else {
             return
         }
+        // The poll reads only one tab, so borrow the duplicate ordinal from the cached list when it matches.
+        let current = cachedTabs.first {
+            $0.windowID == polled.windowID && $0.index == polled.index && $0.url == polled.url
+        } ?? polled
         lastActiveTab = current
         recentTabs.noteActive(current)
     }

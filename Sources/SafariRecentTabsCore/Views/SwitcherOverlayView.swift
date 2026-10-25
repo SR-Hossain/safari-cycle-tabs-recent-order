@@ -1,17 +1,27 @@
 import AppKit
 import SwiftUI
 
-public struct SwitcherOverlayView: View {
-    private let state: SwitcherState
+/// Holds what the long-lived switcher view shows, so each keypress updates data instead of rebuilding the view.
+@MainActor
+public final class SwitcherViewModel: ObservableObject {
+    @Published public var state = SwitcherState(tabs: [], highlightedIndex: 0)
 
-    public init(state: SwitcherState) {
-        self.state = state
+    public init() {}
+}
+
+public struct SwitcherOverlayView: View {
+    @ObservedObject private var model: SwitcherViewModel
+
+    public init(model: SwitcherViewModel) {
+        self.model = model
     }
 
     public var body: some View {
+        let state = model.state
+
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: SwitcherOverlayMetrics.rowSpacing) {
+                LazyVStack(spacing: SwitcherOverlayMetrics.rowSpacing) {
                     ForEach(Array(state.tabs.enumerated()), id: \.element.id) { index, tab in
                         SwitcherTabRow(
                             display: TabDisplayModel(tab: tab),
@@ -24,6 +34,9 @@ public struct SwitcherOverlayView: View {
             }
             .onAppear {
                 proxy.scrollTo(state.highlightedIndex, anchor: .center)
+            }
+            .onChange(of: state) { newState in
+                proxy.scrollTo(newState.highlightedIndex, anchor: .center)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -56,10 +69,11 @@ struct SwitcherTabRow: View {
                     .foregroundStyle(isHighlighted ? .white : .primary)
                     .lineLimit(1)
 
-                Text(display.domain)
+                Text(display.urlText)
                     .font(.system(size: 11))
                     .foregroundStyle(isHighlighted ? .white.opacity(0.8) : .secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
             }
         }
         .frame(maxWidth: .infinity, minHeight: SwitcherOverlayMetrics.rowHeight, alignment: .leading)

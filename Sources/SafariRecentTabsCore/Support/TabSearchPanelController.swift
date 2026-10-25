@@ -15,8 +15,9 @@ private final class KeyablePanel: NSPanel {
 
 @MainActor
 public final class TabSearchPanelController: NSObject, TabSearchPanelControlling, NSWindowDelegate {
-    private var panel: KeyablePanel?
-    private var model: TabSearchModel?
+    private let model = TabSearchModel()
+    private lazy var panel = makePanel()
+    private var isShowing = false
     private var keyMonitor: Any?
     public var onVisibilityChanged: (Bool) -> Void = { _ in }
 
@@ -24,31 +25,35 @@ public final class TabSearchPanelController: NSObject, TabSearchPanelControlling
         super.init()
     }
 
+    /// Builds the panel and its SwiftUI view up front so the first search does not pay for it.
+    public func prewarm() {
+        panel.contentView?.layoutSubtreeIfNeeded()
+    }
+
     public func show(tabs: [SafariTab], onSelect: @escaping (SafariTab) -> Void) {
-        let model = TabSearchModel(tabs: tabs) { [weak self] tab in
+        model.load(tabs: tabs) { [weak self] tab in
             self?.hide()
             onSelect(tab)
         }
-        let panel = panel ?? makePanel()
+        // Same stale-redraw issue as the switcher: a fresh hosting view per open, the model stays.
         panel.contentView = NSHostingView(rootView: TabSearchView(model: model))
         if let screen = NSScreen.main {
             panel.setFrame(TabSearchMetrics.panelFrame(visibleFrame: screen.visibleFrame), display: true)
         }
+        isShowing = true
         // Non-activating, so Safari stays the active app while the panel takes keystrokes.
         panel.makeKeyAndOrderFront(nil)
-        self.panel = panel
-        self.model = model
         installKeyMonitor()
         onVisibilityChanged(true)
     }
 
     public func hide() {
-        guard model != nil else {
+        guard isShowing else {
             return
         }
-        model = nil
+        isShowing = false
         removeKeyMonitor()
-        panel?.orderOut(nil)
+        panel.orderOut(nil)
         onVisibilityChanged(false)
     }
 
@@ -69,6 +74,7 @@ public final class TabSearchPanelController: NSObject, TabSearchPanelControlling
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.delegate = self
+        panel.contentView = NSHostingView(rootView: TabSearchView(model: model))
         return panel
     }
 
@@ -77,9 +83,10 @@ public final class TabSearchPanelController: NSObject, TabSearchPanelControlling
             return
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, let model = self.model, self.panel?.isKeyWindow == true else {
+            guard let self, self.isShowing, self.panel.isKeyWindow else {
                 return event
             }
+            let model = self.model
             switch Int(event.keyCode) {
             case kVK_DownArrow:
                 model.moveSelection(by: 1)

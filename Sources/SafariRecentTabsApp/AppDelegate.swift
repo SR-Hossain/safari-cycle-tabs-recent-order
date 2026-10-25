@@ -70,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         configureStatusItem()
+        panelController.prewarm()
+        searchPanelController.prewarm()
         newHotkeyController.start()
         installSafariActivationObserver()
         updatePollingForFrontmostApp()

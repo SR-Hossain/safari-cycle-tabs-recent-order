@@ -1,33 +1,48 @@
 import AppKit
 import SwiftUI
 
+/// Long-lived model behind the reused search panel; `load` resets it for each open.
 @MainActor
 public final class TabSearchModel: ObservableObject {
     @Published public var query = "" {
-        didSet { selectedIndex = 0 }
+        didSet {
+            guard query != oldValue else {
+                return
+            }
+            updateResults()
+            selectedIndex = 0
+        }
     }
-    @Published public private(set) var selectedIndex: Int
+    @Published public private(set) var selectedIndex = 0
+    @Published public private(set) var results: [SafariTab] = []
 
-    private let tabs: [SafariTab]
-    private let onSelect: (SafariTab) -> Void
+    private var tabs: [SafariTab] = []
+    // Lowercased title + URL per tab, built once per open instead of on every keystroke.
+    private var haystacks: [String] = []
+    private var onSelect: (SafariTab) -> Void = { _ in }
+
+    public init() {}
 
     /// `tabs` arrive in most-recently-used order, current tab first.
-    public init(tabs: [SafariTab], onSelect: @escaping (SafariTab) -> Void) {
+    public func load(tabs: [SafariTab], onSelect: @escaping (SafariTab) -> Void) {
         self.tabs = tabs
         self.onSelect = onSelect
+        haystacks = tabs.map { "\($0.title) \($0.url.absoluteString)".lowercased() }
+        query = ""
+        updateResults()
         // With no query the current tab is pointless to pick, so start on the previous one.
-        self.selectedIndex = tabs.count > 1 ? 1 : 0
+        selectedIndex = tabs.count > 1 ? 1 : 0
     }
 
     /// Every whitespace-separated word must appear in the title or URL; recency order is kept.
-    public var results: [SafariTab] {
+    private func updateResults() {
         let words = query.lowercased().split(whereSeparator: \.isWhitespace)
         guard !words.isEmpty else {
-            return tabs
+            results = tabs
+            return
         }
-        return tabs.filter { tab in
-            let haystack = "\(tab.title) \(tab.url.absoluteString)".lowercased()
-            return words.allSatisfy { haystack.contains($0) }
+        results = zip(tabs, haystacks).compactMap { tab, haystack in
+            words.allSatisfy { haystack.contains($0) } ? tab : nil
         }
     }
 
@@ -40,7 +55,6 @@ public final class TabSearchModel: ObservableObject {
     }
 
     public func selectCurrent() {
-        let results = results
         guard results.indices.contains(selectedIndex) else {
             return
         }
@@ -76,7 +90,7 @@ public struct TabSearchView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: SwitcherOverlayMetrics.rowSpacing) {
+                        LazyVStack(spacing: SwitcherOverlayMetrics.rowSpacing) {
                             ForEach(Array(results.enumerated()), id: \.element.id) { index, tab in
                                 SwitcherTabRow(
                                     display: TabDisplayModel(tab: tab),
@@ -91,6 +105,9 @@ public struct TabSearchView: View {
                     }
                     .onChange(of: model.selectedIndex) { index in
                         proxy.scrollTo(index)
+                    }
+                    .onAppear {
+                        proxy.scrollTo(model.selectedIndex, anchor: .center)
                     }
                 }
             }

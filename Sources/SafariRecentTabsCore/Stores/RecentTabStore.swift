@@ -11,7 +11,7 @@ public struct RecentTabStore: Equatable {
     }
 
     public mutating func orderedTabs(current: SafariTab, availableTabs: [SafariTab]) -> [SafariTab] {
-        let availableByID = Dictionary(uniqueKeysWithValues: availableTabs.map { ($0.id, $0) })
+        let availableByID = Dictionary(availableTabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         mostRecentIDs.removeAll { availableByID[$0] == nil }
 
         var ordered: [SafariTab] = [current]

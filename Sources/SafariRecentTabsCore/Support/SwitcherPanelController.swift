@@ -9,21 +9,32 @@ public protocol SwitcherPanelControlling {
 
 @MainActor
 public final class SwitcherPanelController: SwitcherPanelControlling {
-    private var panel: NSPanel?
+    private let model = SwitcherViewModel()
+    private lazy var panel = makePanel()
 
     public init() {}
 
+    /// Builds the panel and its SwiftUI view up front so the first Control-Tab does not pay for it.
+    public func prewarm() {
+        panel.contentView?.layoutSubtreeIfNeeded()
+    }
+
     public func show(state: SwitcherState) {
-        let panel = panel ?? makePanel()
-        let view = SwitcherOverlayView(state: state)
-        panel.contentView = NSHostingView(rootView: view)
-        place(panel: panel, tabCount: state.tabs.count)
+        let tabCountChanged = model.state.tabs.count != state.tabs.count
+        model.state = state
+        if !panel.isVisible {
+            // A hosting view that sat in an ordered-out panel stops redrawing, so each open gets a fresh one.
+            // While the panel stays open, keypresses only update the model.
+            panel.contentView = NSHostingView(rootView: SwitcherOverlayView(model: model))
+            place(panel: panel, tabCount: state.tabs.count)
+        } else if tabCountChanged {
+            place(panel: panel, tabCount: state.tabs.count)
+        }
         panel.orderFrontRegardless()
-        self.panel = panel
     }
 
     public func hide() {
-        panel?.orderOut(nil)
+        panel.orderOut(nil)
     }
 
     private func makePanel() -> NSPanel {
@@ -38,6 +49,7 @@ public final class SwitcherPanelController: SwitcherPanelControlling {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
+        panel.contentView = NSHostingView(rootView: SwitcherOverlayView(model: model))
         return panel
     }
 
