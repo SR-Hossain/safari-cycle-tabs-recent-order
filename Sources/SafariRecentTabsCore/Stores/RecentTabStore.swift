@@ -10,6 +10,10 @@ public struct RecentTabStore: Equatable {
         mostRecentIDs.insert(tab.id, at: 0)
     }
 
+    public mutating func forget(_ tab: SafariTab) {
+        mostRecentIDs.removeAll { $0 == tab.id }
+    }
+
     public mutating func orderedTabs(current: SafariTab, availableTabs: [SafariTab]) -> [SafariTab] {
         let availableByID = Dictionary(availableTabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         mostRecentIDs.removeAll { availableByID[$0] == nil }

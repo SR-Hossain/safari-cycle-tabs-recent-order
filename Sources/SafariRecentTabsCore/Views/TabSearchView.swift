@@ -54,6 +54,10 @@ public final class TabSearchModel: ObservableObject {
         selectedIndex = (selectedIndex + offset + count) % count
     }
 
+    public var selectedTab: SafariTab? {
+        results.indices.contains(selectedIndex) ? results[selectedIndex] : nil
+    }
+
     public func selectCurrent() {
         guard results.indices.contains(selectedIndex) else {
             return
@@ -90,24 +94,29 @@ public struct TabSearchView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
-                        LazyVStack(spacing: SwitcherOverlayMetrics.rowSpacing) {
+                        // Plain VStack keyed by tab ID: a LazyVStack keyed by row index kept showing stale titles.
+                        VStack(spacing: SwitcherOverlayMetrics.rowSpacing) {
                             ForEach(Array(results.enumerated()), id: \.element.id) { index, tab in
                                 SwitcherTabRow(
                                     display: TabDisplayModel(tab: tab),
                                     isHighlighted: index == model.selectedIndex
                                 )
-                                .id(index)
+                                .id(tab.id)
                                 .contentShape(Rectangle())
                                 .onTapGesture { model.select(tab) }
                             }
                         }
                         .padding(SwitcherOverlayMetrics.listPadding)
                     }
-                    .onChange(of: model.selectedIndex) { index in
-                        proxy.scrollTo(index)
+                    .onChange(of: model.selectedIndex) { _ in
+                        if let id = model.selectedTab?.id {
+                            proxy.scrollTo(id)
+                        }
                     }
                     .onAppear {
-                        proxy.scrollTo(model.selectedIndex, anchor: .center)
+                        if let id = model.selectedTab?.id {
+                            proxy.scrollTo(id, anchor: .center)
+                        }
                     }
                 }
             }

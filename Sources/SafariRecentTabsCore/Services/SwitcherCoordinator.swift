@@ -18,6 +18,9 @@ public final class SwitcherCoordinator {
     // Last known tab list and active tab, so the switcher can open without waiting on Safari.
     private var cachedTabs: [SafariTab] = []
     private var lastActiveTab: SafariTab?
+    // Until the user moves the highlight, reconcile recomputes it, since the cached list may have missed tabs.
+    private var openedReverse = false
+    private var highlightMovedByUser = false
 
     public init(
         safariClient: SafariControlling,
@@ -62,11 +65,32 @@ public final class SwitcherCoordinator {
             return
         }
         // The poll reads only one tab, so borrow the duplicate ordinal from the cached list when it matches.
-        let current = cachedTabs.first {
-            $0.windowID == polled.windowID && $0.index == polled.index && $0.url == polled.url
-        } ?? polled
+        var cached = cachedMatch(for: polled)
+        if cached == nil, state == nil, let tabs = try? timedTabsForSwitcher(reason: "new tab") {
+            // A tab we have not seen (new tab, or the current one navigated): refresh the cache once
+            // so the next Control-Tab opens with it already listed.
+            cachedTabs = tabs
+            cached = cachedMatch(for: polled)
+        }
+        let current = cached ?? polled
+
+        // Safari tabs have no stable ID, so ours includes the URL. Same window and slot with a new URL
+        // means the tab navigated (or the tab there closed): drop the old entry so the tab keeps its
+        // recency instead of looking brand new.
+        if let previous = lastActiveTab,
+           previous.windowID == current.windowID,
+           previous.index == current.index,
+           previous.id != current.id {
+            recentTabs.forget(previous)
+        }
         lastActiveTab = current
         recentTabs.noteActive(current)
+    }
+
+    private func cachedMatch(for tab: SafariTab) -> SafariTab? {
+        cachedTabs.first {
+            $0.windowID == tab.windowID && $0.index == tab.index && $0.url == tab.url
+        }
     }
 
     /// Fills the tab cache; called when Safari comes to the front.
@@ -81,6 +105,7 @@ public final class SwitcherCoordinator {
 
     public func handleHotkey() async {
         if var existingState = state {
+            highlightMovedByUser = true
             existingState.cycleForward()
             state = existingState
             panelController.show(state: existingState)
@@ -92,6 +117,7 @@ public final class SwitcherCoordinator {
 
     public func handleReverseHotkey() async {
         if var existingState = state {
+            highlightMovedByUser = true
             existingState.cycleBackward()
             state = existingState
             panelController.show(state: existingState)
@@ -158,6 +184,8 @@ public final class SwitcherCoordinator {
         }
 
         state = newState
+        openedReverse = reverse
+        highlightMovedByUser = false
         onSwitcherVisibilityChanged(true)
         panelController.show(state: newState)
     }
@@ -181,11 +209,12 @@ public final class SwitcherCoordinator {
             return
         }
 
-        // Keep the user's highlighted tab even if its index shifted in the live list.
+        // Keep a highlight the user chose even if its index shifted; otherwise start fresh from the live list.
         let highlighted = openState.highlightedTab
-        let highlightedIndex = ordered.firstIndex {
-            $0.windowID == highlighted?.windowID && $0.url == highlighted?.url
-        } ?? min(openState.highlightedIndex, ordered.count - 1)
+        let highlightedIndex = highlightMovedByUser
+            ? ordered.firstIndex { $0.windowID == highlighted?.windowID && $0.url == highlighted?.url }
+                ?? min(openState.highlightedIndex, ordered.count - 1)
+            : initialHighlightIndex(for: ordered, reverse: openedReverse)
 
         let newState = SwitcherState(tabs: ordered, highlightedIndex: highlightedIndex)
         guard newState != openState else {

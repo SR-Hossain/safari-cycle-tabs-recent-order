@@ -21,22 +21,27 @@ public struct SwitcherOverlayView: View {
 
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: SwitcherOverlayMetrics.rowSpacing) {
+                // Plain VStack keyed by tab ID: a LazyVStack keyed by row index kept showing stale titles.
+                VStack(spacing: SwitcherOverlayMetrics.rowSpacing) {
                     ForEach(Array(state.tabs.enumerated()), id: \.element.id) { index, tab in
                         SwitcherTabRow(
                             display: TabDisplayModel(tab: tab),
                             isHighlighted: index == state.highlightedIndex
                         )
-                        .id(index)
+                        .id(tab.id)
                     }
                 }
                 .padding(SwitcherOverlayMetrics.listPadding)
             }
             .onAppear {
-                proxy.scrollTo(state.highlightedIndex, anchor: .center)
+                if let id = state.highlightedTab?.id {
+                    proxy.scrollTo(id, anchor: .center)
+                }
             }
             .onChange(of: state) { newState in
-                proxy.scrollTo(newState.highlightedIndex, anchor: .center)
+                if let id = newState.highlightedTab?.id {
+                    proxy.scrollTo(id, anchor: .center)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
